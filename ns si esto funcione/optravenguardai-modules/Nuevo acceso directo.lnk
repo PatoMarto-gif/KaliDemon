@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# create-ai-modules.sh - Crea la estructura y archivos iniciales en /opt/ravenguard/ai-modules
+# Uso: sudo bash /opt/ravenguard/scripts/create-ai-modules.sh [--force]
+set -euo pipefail
+
+FORCE=0
+if [[ "${1:-}" == "--force" ]]; then
+	FORCE=1
+fi
+
+BASE="/opt/ravenguard/ai-modules"
+LOCAL="$BASE/local-llm"
+MODELS="$LOCAL/models"
+CMD="$BASE/command-suggestions"
+CTX="$BASE/context-aware"
+SECRETS="$BASE/secrets"
+LOGS="$BASE/logs"
+SCRIPTS="$BASE/scripts"
+
+ensure_dir() {
+	local d="$1"
+	if [[ ! -d "$d" ]]; then
+		sudo mkdir -p "$d"
+		sudo chown root:root "$d"
+		sudo chmod 755 "$d"
+	fi
+}
+
+write_file() {
+	local path="$1"
+	local content="$2"
+	if [[ -f "$path" && $FORCE -ne 1 ]]; then
+		echo "SKIP: $path (ya existe). Usa --force para sobrescribir."
+		return
+	fi
+	echo "CREANDO $path"
+	sudo tee "$path" > /dev/null <<'EOF'
+$content
+EOF
+	# permisos
+	if [[ "$path" == *.sh || "$path" == *.py ]]; then
+		sudo chmod 755 "$path"
+	else
+		sudo chmod 644 "$path"
+	fi
+	sudo chown root:root "$path"
+}
+
+ensure_dir "$BASE"
+ensure_dir "$LOCAL"
+ensure_dir "$MODELS"
+ensure_dir "$CMD"
+ensure_dir "$CTX"
+ensure_dir "$SECRETS"
+ensure_dir "$LOGS"
+ensure_dir "$SCRIPTS"
+
+write_file "$BASE/README.md" "# RavenGuard AI Modules\n\nContiene módulos relacionados con IA. NO coloque claves en texto plano en este repo. Use un gestor de secretos.\n"
+
+write_file "$BASE/README_SECURITY.md" "Seguridad y secretos\n\n- Nunca almacenar credenciales o keys en archivos bajo /opt/ravenguard/ai-modules/secrets en texto plano.\n- Use Vault, gnome-keyring, pass o similares.\n- Ajuste permisos: secrets debe ser accesible solo por root u otro proceso con privilegios mínimos.\n"
+
+write_file "$LOCAL/config.yaml" "## Configuración mínima para local-llm\nmodel_path: /opt/ravenguard/ai-modules/local-llm/models/\nmax_tokens: 1024\nuse_gpu: false\ncpu_threads: 2\ncache_embeddings: true\n"
+
+write_file "$MODELS/README.md" "# Models directory\n\nColoque aquí referencias a modelos locales o scripts de descarga. No incluya pesos grandes en repos públicos.\n"
+
+write_file "$CMD/README.md" "# Command Suggestions Module\n\nMódulo responsable de sugerir comandos. Implementación de ejemplo en predict.py\n"
+
+write_file "$CMD/predict.py" '#!/usr/bin/env python3
+"""
+predict.py - Plantilla mínima para sugerencias de comandos.
+No requiere librerías externas; en producción sustituir por LLM o heurísticas.
+"""
+import sys
+
+def suggest(context):
+	# placeholder simple
+	return ["echo \"Ejemplo: revisa /opt/ravenguard/README\""]
+
+if __name__ == "__main__":
+	ctx=" ".join(sys.argv[1:]) if len(sys.argv)>1 else ""
+	for s in suggest(ctx):
+		print(s)
+'
+
+write_file "$CTX/README.md" "# Context-aware Module\n\nIndexadores y utilidades para mantener contexto de sesiones.\n"
+
+write_file "$CTX/indexer.py" '#!/usr/bin/env python3
+"""
+indexer.py - Plantilla de indexador de contexto (embeddings simulados).
+En producción conecte un vector DB (pinecone, milvus, sqlite+faiss, etc).
+"""
+import os, json
+
+DB="/opt/ravenguard/ai-modules/context-aware/context_index.json"
+
+def ensure():
+	if not os.path.exists(os.path.dirname(DB)):
+		os.makedirs(os.path.dirname(DB), exist_ok=True)
+	if not os.path.exists(DB):
+		with open(DB, "w", encoding="utf-8") as f:
+			json.dump({"items":[]}, f)
+
+if __name__ == "__main__":
+	ensure()
+	print("Index inicializado (plantilla).")
+'
+
+write_file "$SECRETS/.gitignore" "# Ignorar todo en secrets\n*\n"
+
+# create a safe placeholder for secrets dir (permissions 700)
+if [[ ! -d "$SECRETS" ]]; then
+	sudo mkdir -p "$SECRETS"
+fi
+sudo chown root:root "$SECRETS"
+sudo chmod 700 "$SECRETS"
+sudo tee "$SECRETS/README.txt" > /dev/null <<'EOF'
+NO guardar secretos en texto plano. Use un gestor de secretos.
+EOF
+sudo chmod 600 "$SECRETS/README.txt"
+sudo chown root:root "$SECRETS/README.txt"
+
+write_file "$LOGS/.gitkeep" ""
+
+write_file "$SCRIPTS/manage-models.sh" '#!/usr/bin/env bash
+# manage-models.sh - Plantilla para añadir/eliminar modelos locales
+# Uso: sudo /opt/ravenguard/ai-modules/scripts/manage-models.sh add <url-or-path>
+set -euo pipefail
+
+cmd="${1:-}"
+arg="${2:-}"
+
+case "$cmd" in
+	add)
+		if [[ -z "$arg" ]]; then
+			echo "Uso: $0 add <url-or-path>"
+			exit 2
+		fi
+		echo "Modo plantilla: no descarga modelos automáticamente. Coloque pesos en /opt/ravenguard/ai-modules/local-llm/models/"
+		;;
+	remove)
+		if [[ -z "$arg" ]]; then
+			echo "Uso: $0 remove <model-name>"
+			exit 2
+		fi
+		echo "Eliminando modelo (simulado): $arg"
+		sudo rm -rf "/opt/ravenguard/ai-modules/local-llm/models/$arg"
+		;;
+	list)
+		ls -1 /opt/ravenguard/ai-modules/local-llm/models || echo "(ninguno)"
+		;;
+	*)
+		echo "Comandos: add|remove|list"
+		exit 2
+		;;
+esac
+'
+
+write_file "$SCRIPTS/run-local-llm-fallback.sh" '#!/usr/bin/env bash
+# run-local-llm-fallback.sh - Inicia un servicio LLM de fallback (plantilla)
+# Nota: Este script NO inicia un LLM real; es un stub para integraciones.
+PORT=5100
+HOST=127.0.0.1
+echo "Iniciando LLM fallback en http://$HOST:$PORT (stub, no modelo real)"
+python3 -m http.server --bind "$HOST" "$PORT" --directory /opt/ravenguard/ai-modules/local-llm 2>/dev/null &
+echo $! > /opt/ravenguard/ai-modules/local-llm/llm_stub.pid
+'
+
+# summary note file
+write_file "$BASE/NOTICE.txt" "Plantillas de AI modules creadas. Revise y configure modelos/servicios reales antes de habilitar.\n"
+
+echo "Creación completada: /opt/ravenguard/ai-modules (local-llm, command-suggestions, context-aware, secrets, logs, scripts)."
+echo "Para validar: sudo ls -la /opt/ravenguard/ai-modules"
